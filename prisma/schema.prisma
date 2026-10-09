@@ -1,0 +1,135 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  CUSTOMER
+  OWNER
+  ADMIN
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String?  @unique
+  phone     String?  @unique
+  name      String?
+  role      Role     @default(CUSTOMER)
+  createdAt DateTime @default(now())
+  orders    Order[]
+}
+
+model Product {
+  id           String   @id @default(cuid())
+  slug         String   @unique
+  name         String
+  category     String
+  categorySlug String
+  description  String   @default("")
+  care         String?
+  fabric       String?
+  mrp          Float
+  price        Float
+  images       String[]
+  colors       String[]
+  sizes        String[]
+  stock        Int      @default(0)
+  sold         Int      @default(0)
+  rating       Float    @default(5)
+  reviewCount  Int      @default(0)
+  badges       String[]
+  tags         String[]
+  featured     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  orderItems   OrderItem[]
+
+  @@index([categorySlug])
+  @@index([featured])
+  @@index([createdAt])
+}
+
+model Coupon {
+  code        String    @id
+  type        String    @default("percent")
+  value       Float
+  minOrder    Float     @default(0)
+  description String    @default("")
+  active      Boolean   @default(true)
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Order {
+  id              String      @id @default(cuid())
+  orderNumber     String      @unique
+  userId          String?
+  user            User?       @relation(fields: [userId], references: [id])
+  customerName    String
+  customerPhone   String
+  customerEmail   String?
+  shippingAddress Json
+  subtotal        Float       @default(0)
+  discount        Float       @default(0)
+  shipping        Float       @default(0)
+  totalAmount     Float
+  status          OrderStatus @default(PENDING)
+  couponCode      String?
+  paymentMethod   String?
+  razorpayOrderId String?
+  razorpayPayId   String?
+  notes           String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  items           OrderItem[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([customerPhone])
+}
+
+model OrderItem {
+  id        String  @id @default(cuid())
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  slug      String  @default("")
+  name      String
+  price     Float
+  mrp       Float   @default(0)
+  image     String  @default("")
+  size      String  @default("Free Size")
+  color     String  @default("")
+  quantity  Int
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model SiteSettings {
+  id               Int     @id @default(1)
+  name             String  @default("Kalaa Krityy")
+  tagline          String  @default("Boutique & Training Center")
+  phone            String  @default("79798 20645")
+  phoneRaw         String  @default("917979820645")
+  email            String  @default("kalaakrityy@gmail.com")
+  address          String  @default("Vinay Tower, Patna, Bihar")
+  registration     String  @default("BR-26-0018641")
+  announcement     String  @default("")
+  whatsappEnabled  Boolean @default(true)
+}
