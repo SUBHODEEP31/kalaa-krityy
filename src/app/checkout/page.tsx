@@ -157,23 +157,44 @@ setDiscount(res.discount);
         return;
       }
 
-      const options = {
+const options = {
         key: data.keyId || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
         amount: data.amount,
         currency: data.currency || "INR",
         name: "Kalaa Krityy",
-        description: `Order ${data.orderNumber}`,
+        description: "A Unit of Krity Creations",
+        image: "/logo.png",
         order_id: data.razorpayOrderId,
         prefill: {
           name: form.name,
-          email: form.email || undefined,
+          email: form.email || "kalaakrityy@gmail.com",
           contact: form.phone,
         },
         notes: {
           orderNumber: data.orderNumber,
         },
-        theme: { color: "#4A0E2E" },
+        theme: { color: "#6B1D3A" },
+        // Prioritize native UPI (app intent on mobile / QR on desktop)
+        config: {
+          display: {
+            blocks: {
+              upi: {
+                name: "Pay via UPI / QR (Instant)",
+                instruments: [{ method: "upi" }],
+              },
+              other: {
+                name: "Cards / NetBanking",
+                instruments: [{ method: "card" }, { method: "netbanking" }],
+              },
+            },
+            sequence: ["block.upi", "block.other"],
+            preferences: {
+              show_default_blocks: true,
+            },
+          },
+        },
         modal: {
+          confirm_close: true,
           ondismiss: () => {
             toast.message("Payment cancelled. Your cart items are preserved.");
             setPaying(false);

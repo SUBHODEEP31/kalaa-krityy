@@ -31,8 +31,18 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # env files (can opt-in for committing if needed)
+.env
 .env*
+.env.local
+.env.production
+.env.development
 !.env.example
+
+# payment / secret dumps
+razorpay-live.txt
+rzp-key.csv
+*rzp*key*.csv
+*.key
 
 # vercel
 .vercel
@@ -52,5 +62,3 @@ data/catalog.json
 public/uploads/products/*
 !public/uploads/products/.gitkeep
 
-
-.env.local
