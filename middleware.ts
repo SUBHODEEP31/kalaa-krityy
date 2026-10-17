@@ -5,7 +5,7 @@ const ADMIN_COOKIE = "kk_owner_session";
 
 /**
  * Keep secret resolution identical to src/lib/auth.ts
- * (middleware runs on Edge — cannot import full auth module with cookies()).
+* (middleware runs on Edge - cannot import full auth module with cookies()).
  */
 function getSecret() {
   const secret =
