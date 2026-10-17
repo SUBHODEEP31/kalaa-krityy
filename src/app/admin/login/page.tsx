@@ -1,51 +1,70 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { Suspense, useActionState, useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Lock, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import { ownerLoginAction, type LoginState } from "./actions";
 
-export default function OwnerLoginPage() {
+const initial: LoginState = {};
+
+function LoginForm() {
+  const params = useSearchParams();
+  const next = params.get("next") || "/admin";
+  const [state, formAction, pending] = useActionState(ownerLoginAction, initial);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
 
-async function onSubmit(e: FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ email, password }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        toast.error(data.error || "Login failed");
-        setLoading(false);
-        return;
-      }
-      toast.success("Welcome, owner");
-      // Full navigation so the browser commits Set-Cookie before /admin loads
-      // (client router.replace can race the cookie on Vercel).
-      const next =
-        typeof window !== "undefined"
-          ? new URLSearchParams(window.location.search).get("next")
-          : null;
-      const dest =
-        next && next.startsWith("/admin") && !next.startsWith("/admin/login")
-          ? next
-          : "/admin";
-      window.location.assign(dest);
-    } catch {
-      toast.error("Network error");
-      setLoading(false);
-    }
-  }
+  useEffect(() => {
+    if (state?.error) toast.error(state.error);
+  }, [state]);
 
+  return (
+    <form
+      action={formAction}
+      className="rounded-[28px] border border-line bg-white/90 p-6 md:p-8 shadow-lift space-y-4"
+    >
+      <input type="hidden" name="next" value={next} />
+      <label className="block text-xs font-medium text-muted space-y-1.5">
+        <span>Owner email</span>
+        <Input
+          type="email"
+          name="email"
+          autoComplete="username"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="owner@kalaakrityy.com"
+          required
+        />
+      </label>
+      <label className="block text-xs font-medium text-muted space-y-1.5">
+        <span>Password</span>
+        <Input
+          type="password"
+          name="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="••••••••"
+          required
+        />
+      </label>
+      <Button type="submit" className="w-full" size="lg" disabled={pending}>
+        <Lock size={16} />
+        {pending ? "Verifying…" : "Enter dashboard"}
+      </Button>
+      <p className="text-[11px] text-center text-muted leading-relaxed pt-2 border-t border-line">
+        Secure httpOnly session (24h). Set OWNER_EMAIL / OWNER_PASSWORD /
+        OWNER_SESSION_SECRET on Vercel Production.
+      </p>
+    </form>
+  );
+}
+
+export default function OwnerLoginPage() {
   return (
     <div className="min-h-[70vh] cream-radial flex items-center justify-center px-4 py-16">
       <div className="w-full max-w-md">
@@ -59,41 +78,15 @@ async function onSubmit(e: FormEvent) {
           </p>
         </div>
 
-        <form
-          onSubmit={onSubmit}
-          className="rounded-[28px] border border-line bg-white/90 p-6 md:p-8 shadow-lift space-y-4"
+        <Suspense
+          fallback={
+            <div className="rounded-[28px] border border-line bg-white p-8 text-center text-muted text-sm">
+              Loading…
+            </div>
+          }
         >
-          <label className="block text-xs font-medium text-muted space-y-1.5">
-            <span>Owner email</span>
-            <Input
-              type="email"
-              autoComplete="username"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="owner@kalaakrityy.com"
-              required
-            />
-          </label>
-          <label className="block text-xs font-medium text-muted space-y-1.5">
-            <span>Password</span>
-            <Input
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              required
-            />
-          </label>
-          <Button type="submit" className="w-full" size="lg" disabled={loading}>
-            <Lock size={16} />
-            {loading ? "Verifying…" : "Enter dashboard"}
-          </Button>
-          <p className="text-[11px] text-center text-muted leading-relaxed pt-2 border-t border-line">
-Session is httpOnly-cookie secured (24h). Credentials come from server env
-            on Vercel — never commit secrets.
-          </p>
-        </form>
+          <LoginForm />
+        </Suspense>
 
         <p className="mt-6 text-center text-sm text-muted">
           <Link href="/" className="text-wine hover:underline">

@@ -249,12 +249,19 @@ function productToRow(p: Product) {
 }
 
 export async function getProducts(): Promise<Product[]> {
-  const { data, error } = await sb()
-    .from("Product")
-    .select("*")
-    .order("createdAt", { ascending: false });
-  if (error) throw new Error(`getProducts: ${error.message}`);
-  return ((data || []) as DbProduct[]).map(mapProduct);
+  try {
+    const { data, error } = await sb()
+      .from("Product")
+      .select("*")
+      .order("createdAt", { ascending: false });
+    if (error) throw new Error(`getProducts: ${error.message}`);
+    const list = ((data || []) as DbProduct[]).map(mapProduct);
+    if (list.length === 0) return seedProducts;
+    return list;
+  } catch (err) {
+    console.error("[getProducts] seed fallback", err);
+    return seedProducts;
+  }
 }
 
 export async function getProductBySlugServer(slug: string) {
@@ -268,9 +275,16 @@ export async function getProductBySlugServer(slug: string) {
 }
 
 export async function getCoupons(): Promise<Coupon[]> {
-  const { data, error } = await sb().from("Coupon").select("*");
-  if (error) throw new Error(`getCoupons: ${error.message}`);
-  return ((data || []) as DbCoupon[]).map(mapCoupon);
+  try {
+    const { data, error } = await sb().from("Coupon").select("*");
+    if (error) throw new Error(`getCoupons: ${error.message}`);
+    const list = ((data || []) as DbCoupon[]).map(mapCoupon);
+    if (list.length === 0) return seedCoupons;
+    return list;
+  } catch (err) {
+    console.error("[getCoupons] seed fallback", err);
+    return seedCoupons;
+  }
 }
 
 export async function getSettings(): Promise<SiteSettings> {
@@ -401,115 +415,206 @@ export async function updateSettings(
 }
 
 export async function getOrders(): Promise<Order[]> {
-  const { data, error } = await sb()
-    .from("Order")
-    .select("*")
-    .order("createdAt", { ascending: false });
-  if (error) throw new Error(`getOrders: ${error.message}`);
+  const { memoryListOrders } = await import("@/lib/order-store");
+  try {
+    const { data, error } = await sb()
+      .from("Order")
+      .select("*")
+      .order("createdAt", { ascending: false });
+    if (error) throw new Error(error.message);
 
-  const orders = (data || []) as DbOrderRow[];
-  if (orders.length === 0) return [];
+    const orders = (data || []) as DbOrderRow[];
+    if (orders.length === 0) return memoryListOrders();
 
-  const ids = orders.map((o) => o.id);
-  const { data: items, error: itemsErr } = await sb()
-    .from("OrderItem")
-    .select("*")
-    .in("orderId", ids);
-  if (itemsErr) throw new Error(`getOrders items: ${itemsErr.message}`);
+    const ids = orders.map((o) => o.id);
+    const { data: items, error: itemsErr } = await sb()
+      .from("OrderItem")
+      .select("*")
+      .in("orderId", ids);
+    if (itemsErr) throw new Error(itemsErr.message);
 
-  const byOrder = new Map<string, DbOrderItemRow[]>();
-  for (const it of (items || []) as DbOrderItemRow[]) {
-    const list = byOrder.get(it.orderId) || [];
-    list.push(it);
-    byOrder.set(it.orderId, list);
+    const byOrder = new Map<string, DbOrderItemRow[]>();
+    for (const it of (items || []) as DbOrderItemRow[]) {
+      const list = byOrder.get(it.orderId) || [];
+      list.push(it);
+      byOrder.set(it.orderId, list);
+    }
+
+    const mapped = orders.map((o) =>
+      mapOrder({ ...o, OrderItem: byOrder.get(o.id) || [] })
+    );
+    // merge memory-only orders (not yet in Supabase)
+    const mem = memoryListOrders();
+    const idsSet = new Set(mapped.map((o) => o.id));
+    for (const m of mem) {
+      if (!idsSet.has(m.id)) mapped.unshift(m);
+    }
+    return mapped;
+  } catch (err) {
+    console.error("[getOrders] fallback memory", err);
+    return memoryListOrders();
   }
-
-  return orders.map((o) =>
-    mapOrder({ ...o, OrderItem: byOrder.get(o.id) || [] })
-  );
 }
 
 export async function createOrder(order: Order): Promise<Order> {
+  const {
+    buildMemoryOrder,
+    stubProductFromItem,
+  } = await import("@/lib/order-store");
+
   const orderId = newId("ord_");
   const orderNumber = order.id || `KK${Date.now().toString().slice(-10)}`;
-
-  for (const item of order.items) {
-    const { data: product, error } = await sb()
-      .from("Product")
-      .select("id, stock, sold")
-      .eq("id", item.productId)
-      .maybeSingle();
-    if (error) throw new Error(`createOrder lookup: ${error.message}`);
-    if (!product) throw new Error(`Product not found: ${item.productId}`);
-  }
-
   const status = order.status || "PENDING";
-  const { error: orderErr } = await sb()
-    .from("Order")
-    .insert({
-      id: orderId,
-      orderNumber,
-      customerName: order.customer.name,
-      customerPhone: order.customer.phone,
-      customerEmail: order.customer.email ?? null,
-      shippingAddress: {
-        address: order.customer.address,
-        city: order.customer.city,
-        pincode: order.customer.pincode,
-      },
-      subtotal: order.subtotal,
-      discount: order.discount,
-      shipping: order.shipping,
-      totalAmount: order.total,
-      status,
-      couponCode: order.couponCode ?? null,
-      paymentMethod: order.paymentMethod || "RAZORPAY",
-      notes: order.notes ?? null,
-      razorpayOrderId: order.razorpayOrderId ?? null,
-      razorpayPayId: order.razorpayPayId ?? null,
-    });
 
-  if (orderErr) throw new Error(`createOrder: ${orderErr.message}`);
-
-  const itemRows = order.items.map((i) => ({
-    id: newId("oi_"),
-    orderId,
-    productId: i.productId,
-    slug: i.slug,
-    name: i.name,
-    price: i.price,
-    mrp: i.mrp,
-    image: i.image,
-    size: i.size || "Free Size",
-    color: i.color || "",
-    quantity: i.qty,
-  }));
-
-  const { error: itemsErr } = await sb().from("OrderItem").insert(itemRows);
-  if (itemsErr) {
-    await sb().from("Order").delete().eq("id", orderId);
-    throw new Error(`createOrder items: ${itemsErr.message}`);
-  }
-
-  // Inventory is adjusted only when payment is confirmed (PAID)
-  if (status === "PAID") {
-    await applyInventoryForOrder(order.items);
-  }
-
-  const { data: full, error: fetchErr } = await sb()
-    .from("Order")
-    .select("*")
-    .eq("id", orderId)
-    .single();
-  if (fetchErr) throw new Error(`createOrder fetch: ${fetchErr.message}`);
-  const { data: createdItems } = await sb()
-    .from("OrderItem")
-    .select("*")
-    .eq("orderId", orderId);
-  return mapOrder({
-    ...(full as DbOrderRow),
-    OrderItem: (createdItems || []) as DbOrderItemRow[],
+  // Always keep a memory copy so checkout succeeds even if Supabase is down
+  const memoryOrder = buildMemoryOrder({
+    orderNumber,
+    status,
+    customer: order.customer,
+    items: order.items,
+    subtotal: order.subtotal,
+    discount: order.discount,
+    shipping: order.shipping,
+    total: order.total,
+    couponCode: order.couponCode,
+    paymentMethod: order.paymentMethod || "RAZORPAY",
+    razorpayOrderId: order.razorpayOrderId,
+    razorpayPayId: order.razorpayPayId,
+    notes: order.notes,
   });
+
+  try {
+    // Ensure Product rows exist (seed cart IDs like p12 often missing in empty DB)
+    for (const item of order.items) {
+      const stub = stubProductFromItem(item);
+      const { data: existing, error: lookErr } = await sb()
+        .from("Product")
+        .select("id")
+        .eq("id", stub.id)
+        .maybeSingle();
+      if (lookErr) {
+        // Network / project paused — return memory order so Razorpay can open
+        console.error("[createOrder] product lookup failed, using memory store", lookErr.message);
+        return memoryOrder;
+      }
+      if (!existing) {
+        const { error: insErr } = await sb()
+          .from("Product")
+          .insert({
+            id: stub.id,
+            slug: stub.slug,
+            name: stub.name,
+            category: stub.category,
+            categorySlug: stub.categorySlug,
+            description: stub.description,
+            care: stub.care,
+            fabric: stub.fabric,
+            mrp: stub.mrp,
+            price: stub.price,
+            images: stub.images,
+            colors: stub.colors,
+            sizes: stub.sizes,
+            stock: stub.stock,
+            sold: stub.sold,
+            rating: stub.rating,
+            reviewCount: stub.reviewCount,
+            badges: stub.badges,
+            tags: stub.tags,
+            featured: stub.featured,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+        if (insErr) {
+          console.error("[createOrder] product stub insert", insErr.message);
+          // continue — may still fail on FK; memory order remains
+        }
+      }
+      item.productId = stub.id;
+    }
+
+    const { error: orderErr } = await sb()
+      .from("Order")
+      .insert({
+        id: orderId,
+        orderNumber,
+        customerName: order.customer.name,
+        customerPhone: order.customer.phone,
+        customerEmail: order.customer.email ?? null,
+        shippingAddress: {
+          address: order.customer.address,
+          city: order.customer.city,
+          pincode: order.customer.pincode,
+        },
+        subtotal: order.subtotal,
+        discount: order.discount,
+        shipping: order.shipping,
+        totalAmount: order.total,
+        status,
+        couponCode: order.couponCode ?? null,
+        paymentMethod: order.paymentMethod || "RAZORPAY",
+        notes: order.notes ?? null,
+        razorpayOrderId: order.razorpayOrderId ?? null,
+        razorpayPayId: order.razorpayPayId ?? null,
+      });
+
+    if (orderErr) {
+      console.error("[createOrder] insert failed, memory fallback", orderErr.message);
+      return memoryOrder;
+    }
+
+    const itemRows = order.items.map((i) => ({
+      id: newId("oi_"),
+      orderId,
+      productId: i.productId,
+      slug: i.slug,
+      name: i.name,
+      price: i.price,
+      mrp: i.mrp,
+      image: i.image,
+      size: i.size || "Free Size",
+      color: i.color || "",
+      quantity: i.qty,
+    }));
+
+    const { error: itemsErr } = await sb().from("OrderItem").insert(itemRows);
+    if (itemsErr) {
+      await sb().from("Order").delete().eq("id", orderId);
+      console.error("[createOrder] items failed, memory fallback", itemsErr.message);
+      return memoryOrder;
+    }
+
+    if (status === "PAID") {
+      try {
+        await applyInventoryForOrder(order.items);
+      } catch (e) {
+        console.error("[createOrder] inventory", e);
+      }
+    }
+
+    const { data: full, error: fetchErr } = await sb()
+      .from("Order")
+      .select("*")
+      .eq("id", orderId)
+      .single();
+    if (fetchErr || !full) return memoryOrder;
+
+    const { data: createdItems } = await sb()
+      .from("OrderItem")
+      .select("*")
+      .eq("orderId", orderId);
+
+    const mapped = mapOrder({
+      ...(full as DbOrderRow),
+      OrderItem: (createdItems || []) as DbOrderItemRow[],
+    });
+    // keep memory in sync for verify/webhook on same instance
+    const { memorySaveOrder } = await import("@/lib/order-store");
+    memorySaveOrder(mapped);
+    return mapped;
+  } catch (err) {
+    console.error("[createOrder] unexpected, memory fallback", err);
+    return memoryOrder;
+  }
 }
 
 export async function updateOrderStatus(
@@ -572,25 +677,49 @@ export async function markOrderPaid(opts: {
   razorpayOrderId?: string;
   razorpayPayId: string;
 }): Promise<Order | null> {
+  const {
+memoryGetByOrderNumber,
+    memoryGetByRazorpayId,
+    memoryUpdateOrder,
+  } = await import("@/lib/order-store");
+
   let existing: DbOrderRow | null = null;
 
-  if (opts.orderNumber) {
-    const { data } = await sb()
-      .from("Order")
-      .select("*")
-      .eq("orderNumber", opts.orderNumber)
-      .maybeSingle();
-    existing = data as DbOrderRow | null;
+  try {
+    if (opts.orderNumber) {
+      const { data } = await sb()
+        .from("Order")
+        .select("*")
+        .eq("orderNumber", opts.orderNumber)
+        .maybeSingle();
+      existing = data as DbOrderRow | null;
+    }
+    if (!existing && opts.razorpayOrderId) {
+      const { data } = await sb()
+        .from("Order")
+        .select("*")
+        .eq("razorpayOrderId", opts.razorpayOrderId)
+        .maybeSingle();
+      existing = data as DbOrderRow | null;
+    }
+  } catch (err) {
+    console.error("[markOrderPaid] supabase read", err);
   }
-  if (!existing && opts.razorpayOrderId) {
-    const { data } = await sb()
-      .from("Order")
-      .select("*")
-      .eq("razorpayOrderId", opts.razorpayOrderId)
-      .maybeSingle();
-    existing = data as DbOrderRow | null;
+
+  if (!existing) {
+    // Memory-only order path (Supabase down at create time)
+    const mem =
+      (opts.orderNumber && memoryGetByOrderNumber(opts.orderNumber)) ||
+      (opts.razorpayOrderId && memoryGetByRazorpayId(opts.razorpayOrderId)) ||
+      null;
+    if (!mem) return null;
+    const paid = memoryUpdateOrder(mem.id, {
+      status: "PAID",
+      razorpayPayId: opts.razorpayPayId,
+      paymentMethod: "RAZORPAY",
+    });
+    return paid;
   }
-  if (!existing) return null;
 
   // Already paid — idempotent
   if (existing.status === "PAID" || existing.status === "PROCESSING" || existing.status === "SHIPPED" || existing.status === "DELIVERED") {
@@ -644,21 +773,38 @@ export async function markOrderPaid(opts: {
 
 export async function lookupOrder(orderNumber: string, phone: string): Promise<Order | null> {
   const cleanPhone = phone.replace(/\D/g, "").slice(-10);
-  const { data, error } = await sb()
-    .from("Order")
-    .select("*")
-    .eq("orderNumber", orderNumber.trim())
-    .maybeSingle();
-  if (error) throw new Error(`lookupOrder: ${error.message}`);
-  if (!data) return null;
-  const row = data as DbOrderRow;
-  const rowPhone = String(row.customerPhone || "").replace(/\D/g, "").slice(-10);
-  if (rowPhone !== cleanPhone) return null;
-  const { data: items } = await sb()
-    .from("OrderItem")
-    .select("*")
-    .eq("orderId", row.id);
-  return mapOrder({ ...row, OrderItem: (items || []) as DbOrderItemRow[] });
+  const { memoryGetByOrderNumber } = await import("@/lib/order-store");
+
+  try {
+    const { data, error } = await sb()
+      .from("Order")
+      .select("*")
+      .eq("orderNumber", orderNumber.trim())
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (data) {
+      const row = data as DbOrderRow;
+      const rowPhone = String(row.customerPhone || "")
+        .replace(/\D/g, "")
+        .slice(-10);
+      if (rowPhone !== cleanPhone) return null;
+      const { data: items } = await sb()
+        .from("OrderItem")
+        .select("*")
+        .eq("orderId", row.id);
+      return mapOrder({ ...row, OrderItem: (items || []) as DbOrderItemRow[] });
+    }
+  } catch (err) {
+    console.error("[lookupOrder] supabase", err);
+  }
+
+  const mem = memoryGetByOrderNumber(orderNumber.trim());
+  if (!mem) return null;
+  const memPhone = String(mem.customer.phone || "")
+    .replace(/\D/g, "")
+    .slice(-10);
+  if (memPhone !== cleanPhone) return null;
+  return mem;
 }
 
 export async function appendOrderNote(

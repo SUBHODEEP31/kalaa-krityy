@@ -68,10 +68,18 @@ export default function AdminPage() {
 const load = useCallback(async () => {
     setLoading(true);
     try {
-      const me = await fetch("/api/auth/me", {
+let me = await fetch("/api/auth/me", {
         cache: "no-store",
         credentials: "include",
       });
+      // Cookie can lag one tick after server-action redirect on some CDNs
+      if (me.status === 401) {
+        await new Promise((r) => setTimeout(r, 400));
+        me = await fetch("/api/auth/me", {
+          cache: "no-store",
+          credentials: "include",
+        });
+      }
       if (me.status === 401) {
         router.replace("/admin/login");
         return;

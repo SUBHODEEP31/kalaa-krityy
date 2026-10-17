@@ -102,9 +102,21 @@ export async function POST(req: NextRequest) {
       keyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
       customer: saved.customer,
     });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Razorpay order failed";
+} catch (err) {
     console.error("[razorpay/order]", err);
-    return NextResponse.json({ error: message }, { status: 500 });
+    const message =
+      err instanceof Error
+        ? err.message
+        : typeof err === "object" && err && "error" in err
+          ? String((err as { error?: { description?: string } }).error?.description || err)
+          : "Payment order failed";
+    // Friendlier production messages
+    const friendly =
+      /fetch failed|ENOTFOUND|ECONNREFUSED/i.test(message)
+        ? "Could not reach order database. Payment keys may still work — retry once. If this continues, check SUPABASE_URL on Vercel."
+        : /Razorpay|key/i.test(message)
+          ? "Razorpay rejected the order. Verify live KEY_ID and KEY_SECRET on Vercel."
+          : message;
+    return NextResponse.json({ error: friendly }, { status: 500 });
   }
 }
