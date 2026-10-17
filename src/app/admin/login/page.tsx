@@ -1,7 +1,6 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Lock, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -9,31 +8,40 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 
 export default function OwnerLoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function onSubmit(e: FormEvent) {
+async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setLoading(true);
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ email, password }),
       });
       const data = await res.json();
       if (!res.ok) {
         toast.error(data.error || "Login failed");
+        setLoading(false);
         return;
       }
       toast.success("Welcome, owner");
-      router.replace("/admin");
-      router.refresh();
+      // Full navigation so the browser commits Set-Cookie before /admin loads
+      // (client router.replace can race the cookie on Vercel).
+      const next =
+        typeof window !== "undefined"
+          ? new URLSearchParams(window.location.search).get("next")
+          : null;
+      const dest =
+        next && next.startsWith("/admin") && !next.startsWith("/admin/login")
+          ? next
+          : "/admin";
+      window.location.assign(dest);
     } catch {
       toast.error("Network error");
-    } finally {
       setLoading(false);
     }
   }
@@ -82,8 +90,8 @@ export default function OwnerLoginPage() {
             {loading ? "Verifying…" : "Enter dashboard"}
           </Button>
           <p className="text-[11px] text-center text-muted leading-relaxed pt-2 border-t border-line">
-            Session is httpOnly-cookie secured (12h). Change credentials in{" "}
-            <code className="text-wine">.env</code> before going live.
+Session is httpOnly-cookie secured (24h). Credentials come from server env
+            on Vercel — never commit secrets.
           </p>
         </form>
 

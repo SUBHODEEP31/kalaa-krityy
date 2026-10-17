@@ -1,8 +1,12 @@
-import { NextResponse } from "next/server";
-import { getOwnerSession } from "@/lib/auth";
+import { NextRequest, NextResponse } from "next/server";
+import { requireOwner } from "@/lib/auth";
 
-export async function GET() {
-  const session = await getOwnerSession();
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+export async function GET(req: NextRequest) {
+  // Prefer request cookies (same path as admin APIs) for consistency on Vercel
+  const session = await requireOwner(req);
   if (!session) {
     return NextResponse.json({ authenticated: false }, { status: 401 });
   }

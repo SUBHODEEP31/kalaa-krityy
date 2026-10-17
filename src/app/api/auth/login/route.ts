@@ -5,7 +5,11 @@ import {
   createOwnerToken,
   getOwnerCredentials,
   setOwnerCookie,
+  setOwnerCookieOnStore,
 } from "@/lib/auth";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   const ip =
@@ -16,7 +20,10 @@ export async function POST(req: NextRequest) {
   const limit = checkLoginRateLimit(ip);
   if (!limit.ok) {
     return NextResponse.json(
-      { error: "Too many attempts. Try again later.", retryAfterSec: limit.retryAfterSec },
+      {
+        error: "Too many attempts. Try again later.",
+        retryAfterSec: limit.retryAfterSec,
+      },
       { status: 429 }
     );
   }
@@ -32,14 +39,23 @@ export async function POST(req: NextRequest) {
   const password = body.password || "";
   const creds = getOwnerCredentials();
 
-  // Constant-time-ish compare for password length mismatch still early-returns —
-  // good enough for boutique owner panel; upgrade to bcrypt hashes for multi-user.
   if (email !== creds.email || password !== creds.password) {
-    return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Invalid email or password" },
+      { status: 401 }
+    );
   }
 
   clearLoginRateLimit(ip);
   const token = await createOwnerToken(email);
+
+  // Dual-set: cookie store + response header (most reliable on Vercel)
+  try {
+    await setOwnerCookieOnStore(token);
+  } catch {
+    // cookies().set can throw outside certain contexts — response set still applies
+  }
+
   const res = NextResponse.json({
     ok: true,
     user: { email, role: "OWNER" },

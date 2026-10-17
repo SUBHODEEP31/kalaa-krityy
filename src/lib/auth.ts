@@ -3,20 +3,46 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
 export const ADMIN_COOKIE = "kk_owner_session";
-const MAX_AGE = 60 * 60 * 12; // 12 hours
+/** 24 hours — production owner console session */
+export const OWNER_SESSION_MAX_AGE = 60 * 60 * 24;
+
+/**
+ * Single source of truth for JWT signing/verify.
+ * Must match between Edge middleware and Node route handlers.
+ * Always set OWNER_SESSION_SECRET on Vercel Production.
+ */
+export function getOwnerSessionSecretString() {
+  const secret =
+    process.env.OWNER_SESSION_SECRET?.trim() ||
+    process.env.NEXTAUTH_SECRET?.trim() ||
+    "kalaa-krityy-dev-secret-change-me";
+  return secret;
+}
 
 function getSecret() {
-  const secret =
-    process.env.OWNER_SESSION_SECRET ||
-    process.env.NEXTAUTH_SECRET ||
-    "kalaa-krityy-dev-secret-change-me";
-  return new TextEncoder().encode(secret);
+  return new TextEncoder().encode(getOwnerSessionSecretString());
+}
+
+function isSecureCookie() {
+  // Vercel always serves HTTPS; NODE_ENV is production there.
+  if (process.env.VERCEL === "1") return true;
+  if (process.env.NODE_ENV === "production") return true;
+  return false;
+}
+
+export function ownerCookieOptions(maxAge = OWNER_SESSION_MAX_AGE) {
+  return {
+    httpOnly: true as const,
+    secure: isSecureCookie(),
+    sameSite: "lax" as const,
+    path: "/",
+    maxAge,
+  };
 }
 
 export function getOwnerCredentials() {
   return {
     email: (process.env.OWNER_EMAIL || "owner@kalaakrityy.com").toLowerCase(),
-    // Default strong-ish demo password — change via .env for production
     password: process.env.OWNER_PASSWORD || "Kalaa@Owner2026",
   };
 }
@@ -25,7 +51,7 @@ export async function createOwnerToken(email: string) {
   return new SignJWT({ role: "OWNER", email })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime(`${MAX_AGE}s`)
+    .setExpirationTime(`${OWNER_SESSION_MAX_AGE}s`)
     .sign(getSecret());
 }
 
@@ -47,21 +73,17 @@ export async function getOwnerSession() {
 }
 
 export function setOwnerCookie(res: NextResponse, token: string) {
-  res.cookies.set(ADMIN_COOKIE, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: MAX_AGE,
-  });
+  res.cookies.set(ADMIN_COOKIE, token, ownerCookieOptions());
+}
+
+export async function setOwnerCookieOnStore(token: string) {
+  const jar = await cookies();
+  jar.set(ADMIN_COOKIE, token, ownerCookieOptions());
 }
 
 export function clearOwnerCookie(res: NextResponse) {
   res.cookies.set(ADMIN_COOKIE, "", {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
+    ...ownerCookieOptions(0),
     maxAge: 0,
   });
 }

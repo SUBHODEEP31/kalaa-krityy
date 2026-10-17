@@ -3,22 +3,46 @@ import { jwtVerify } from "jose";
 
 const ADMIN_COOKIE = "kk_owner_session";
 
+/**
+ * Keep secret resolution identical to src/lib/auth.ts
+ * (middleware runs on Edge — cannot import full auth module with cookies()).
+ */
 function getSecret() {
   const secret =
-    process.env.OWNER_SESSION_SECRET ||
-    process.env.NEXTAUTH_SECRET ||
+    process.env.OWNER_SESSION_SECRET?.trim() ||
+    process.env.NEXTAUTH_SECRET?.trim() ||
     "kalaa-krityy-dev-secret-change-me";
   return new TextEncoder().encode(secret);
+}
+
+function isSecureCookie() {
+  if (process.env.VERCEL === "1") return true;
+  if (process.env.NODE_ENV === "production") return true;
+  return false;
 }
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Only guard /admin/* except login
   if (!pathname.startsWith("/admin")) {
     return NextResponse.next();
   }
+
   if (pathname === "/admin/login" || pathname.startsWith("/admin/login/")) {
+    const existing = req.cookies.get(ADMIN_COOKIE)?.value;
+    if (existing) {
+      try {
+        const { payload } = await jwtVerify(existing, getSecret());
+        if (payload.role === "OWNER") {
+          const url = req.nextUrl.clone();
+          url.pathname = "/admin";
+          url.search = "";
+          return NextResponse.redirect(url);
+        }
+      } catch {
+        // invalid cookie — show login
+      }
+    }
     return NextResponse.next();
   }
 
@@ -43,7 +67,7 @@ export async function middleware(req: NextRequest) {
     res.cookies.set(ADMIN_COOKIE, "", {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure: isSecureCookie(),
       path: "/",
       maxAge: 0,
     });
@@ -52,5 +76,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/admin/:path*"],
+  matcher: ["/admin", "/admin/:path*"],
 };

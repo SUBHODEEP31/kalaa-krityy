@@ -65,24 +65,46 @@ export default function AdminPage() {
   });
   const [query, setQuery] = useState("");
 
-  const load = useCallback(async () => {
+const load = useCallback(async () => {
     setLoading(true);
     try {
-      const me = await fetch("/api/auth/me", { cache: "no-store" });
-      if (!me.ok) {
+      const me = await fetch("/api/auth/me", {
+        cache: "no-store",
+        credentials: "include",
+      });
+      if (me.status === 401) {
         router.replace("/admin/login");
+        return;
+      }
+      if (!me.ok) {
+        toast.error("Could not verify owner session. Retrying…");
+        setReady(false);
         return;
       }
       const meData = await me.json();
       setEmail(meData.user?.email || "");
 
       const [pRes, cRes, oRes] = await Promise.all([
-        fetch("/api/admin/products", { cache: "no-store" }),
-        fetch("/api/admin/coupons", { cache: "no-store" }),
-        fetch("/api/admin/orders", { cache: "no-store" }),
+        fetch("/api/admin/products", { cache: "no-store", credentials: "include" }),
+        fetch("/api/admin/coupons", { cache: "no-store", credentials: "include" }),
+        fetch("/api/admin/orders", { cache: "no-store", credentials: "include" }),
       ]);
-      if (!pRes.ok || !cRes.ok) {
+
+      // Only treat 401 as auth failure — data/API errors should not bounce to login
+      if (pRes.status === 401 || cRes.status === 401) {
         router.replace("/admin/login");
+        return;
+      }
+      if (!pRes.ok || !cRes.ok) {
+        const errBody = !pRes.ok ? await pRes.text() : await cRes.text();
+        console.error("[admin load]", pRes.status, cRes.status, errBody);
+        toast.error(
+          "Owner session is valid but catalog APIs failed. Check Supabase env on Vercel."
+        );
+        setProducts([]);
+        setCoupons([]);
+        setOrders([]);
+        setReady(true);
         return;
       }
       const pData = await pRes.json();
@@ -92,8 +114,9 @@ export default function AdminPage() {
       setCoupons(cData.coupons || []);
       setOrders(oData.orders || []);
       setReady(true);
-    } catch {
-      router.replace("/admin/login");
+    } catch (err) {
+      console.error("[admin load]", err);
+      toast.error("Network error loading owner console");
     } finally {
       setLoading(false);
     }
