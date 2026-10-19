@@ -538,9 +538,9 @@ export function ReviewsAndGallery() {
           </div>
 <div className="mt-6 flex flex-wrap justify-center gap-3">
             <a
-              href={SITE.instagram}
+              href="https://www.instagram.com/kalaa_krityy"
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               className={cn(buttonVariants({ variant: "outline", size: "md" }), "border-transparent text-white")}
               style={{
                 background:

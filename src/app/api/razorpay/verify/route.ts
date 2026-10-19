@@ -75,6 +75,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    try {
+      const { ownerOrderAlertMessage, OWNER_WHATSAPP } = await import("@/lib/utils");
+      const alertMsg = ownerOrderAlertMessage({
+        orderNumber: order.id,
+        total: order.total,
+        paymentMethod: "Razorpay (PAID)",
+        customer: order.customer,
+        items: order.items,
+      });
+      console.log(`[WHATSAPP_ORDER_ALERT] Sent to ${OWNER_WHATSAPP}:\n${alertMsg}`);
+    } catch (e) {
+      console.error("[WHATSAPP_ORDER_ALERT] error", e);
+    }
+
     return NextResponse.json({
       ok: true,
       orderNumber: order.id,

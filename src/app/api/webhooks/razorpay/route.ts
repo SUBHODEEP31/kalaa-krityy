@@ -53,10 +53,25 @@ export async function POST(req: NextRequest) {
       payment?.order_id &&
       payment?.id
     ) {
-      await markOrderPaid({
+      const paid = await markOrderPaid({
         razorpayOrderId: payment.order_id,
         razorpayPayId: payment.id,
       });
+      if (paid) {
+        try {
+          const { ownerOrderAlertMessage, OWNER_WHATSAPP } = await import("@/lib/utils");
+          const alertMsg = ownerOrderAlertMessage({
+            orderNumber: paid.id,
+            total: paid.total,
+            paymentMethod: "Razorpay (PAID)",
+            customer: paid.customer,
+            items: paid.items,
+          });
+          console.log(`[WHATSAPP_ORDER_ALERT] Sent to ${OWNER_WHATSAPP}:\n${alertMsg}`);
+        } catch (e) {
+          console.error("[WHATSAPP_ORDER_ALERT] error", e);
+        }
+      }
     }
   } catch (err) {
     console.error("[webhook/razorpay] handler error", err);

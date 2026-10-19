@@ -30,7 +30,7 @@ export function Footer() {
               `Hi ${SITE.name}! I would like to know more about your collection.`
             )}
             target="_blank"
-            rel="noreferrer"
+            rel="noopener noreferrer"
             className="inline-flex h-12 items-center rounded-full gold-gradient px-7 text-sm font-semibold text-wine-deep shadow-soft hover:brightness-105 transition"
           >
             Chat on WhatsApp

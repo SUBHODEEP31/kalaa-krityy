@@ -3,10 +3,19 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { CheckCircle2, MessageCircle, PackageSearch, Share2 } from "lucide-react";
+import {
+  CheckCircle2,
+  MessageCircle,
+  PackageSearch,
+  Share2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SITE } from "@/data/catalog";
-import { formatINR, whatsappLink } from "@/lib/utils";
+import {
+  formatINR,
+  ownerOrderWhatsAppLink,
+  whatsappLink,
+} from "@/lib/utils";
 
 type LastOrder = {
   orderNumber: string;
@@ -14,6 +23,7 @@ type LastOrder = {
   subtotal?: number;
   discount?: number;
   shipping?: number;
+  paymentMethod?: string;
   customer?: {
     name: string;
     phone: string;
@@ -27,7 +37,9 @@ type LastOrder = {
 function SuccessBody() {
   const params = useSearchParams();
   const orderId = params.get("orderId") || params.get("order") || "";
+  const payQ = params.get("pay") || "";
   const [last, setLast] = useState<LastOrder | null>(null);
+  const [ownerOpened, setOwnerOpened] = useState(false);
 
   useEffect(() => {
     try {
@@ -40,6 +52,9 @@ function SuccessBody() {
     }
   }, [orderId]);
 
+  const paymentMethod =
+    last?.paymentMethod || payQ || "ONLINE";
+
   const itemsSummary = useMemo(() => {
     if (!last?.items?.length) return "See order on website";
     return last.items
@@ -47,11 +62,39 @@ function SuccessBody() {
       .join(", ");
   }, [last]);
 
-  const shareCustomer = orderId
-    ? `Hello! My Kalaa Krityy order is confirmed.\nOrder ID: ${orderId}\nTotal Paid: ${formatINR(last?.total || 0)}\nItems: ${itemsSummary}\nShip to: ${last?.customer?.address || ""}, ${last?.customer?.city || ""} ${last?.customer?.pincode || ""}\nEstimated dispatch: 2-4 business days.`
-    : `Hello Kalaa Krityy! My payment is successful. Please help me with order confirmation.`;
+  const ownerHref = ownerOrderWhatsAppLink({
+    orderNumber: orderId || last?.orderNumber || "N/A",
+    total: last?.total ?? 0,
+    paymentMethod,
+    customer: last?.customer,
+    items: last?.items,
+  });
 
-  const notifyOwner = `New Order Alert! Order: ${orderId || "N/A"}, Customer: ${last?.customer?.name || "Customer"} (${last?.customer?.phone || "n/a"}), Items: ${itemsSummary}, Total Paid: ₹${last?.total ?? "—"}. Address: ${last?.customer?.address || ""}, ${last?.customer?.city || ""} - ${last?.customer?.pincode || ""}.`;
+  // Auto-open owner WhatsApp once so boutique always gets the order ping
+  useEffect(() => {
+    if (!orderId || ownerOpened) return;
+    const key = `kk-owner-wa-${orderId}`;
+    try {
+      if (sessionStorage.getItem(key)) {
+        setOwnerOpened(true);
+        return;
+      }
+      sessionStorage.setItem(key, "1");
+    } catch {
+      /* ignore */
+    }
+    const t = setTimeout(() => {
+      try {
+        window.open(ownerHref, "_blank", "noopener,noreferrer");
+      } catch {
+        /* blocked popup — button remains */
+      }
+      setOwnerOpened(true);
+    }, 600);
+    return () => clearTimeout(t);
+  }, [orderId, ownerHref, ownerOpened]);
+
+  const isCod = /COD/i.test(paymentMethod);
 
   return (
     <div className="container-pro py-12 md:py-20 max-w-2xl pb-28">
@@ -60,14 +103,16 @@ function SuccessBody() {
           <CheckCircle2 size={32} />
         </div>
         <p className="text-[11px] uppercase tracking-[0.22em] text-gold font-semibold">
-          Payment confirmed
+          {isCod ? "COD order placed" : "Payment confirmed"}
         </p>
         <h1 className="mt-2 font-display text-3xl md:text-4xl text-wine">
           Thank you for shopping with us
         </h1>
         <p className="mt-3 text-muted leading-relaxed">
-          Your order is confirmed with {SITE.name} — {SITE.tagline}. Ready pieces
-          usually dispatch in <strong className="text-wine">2–4 business days</strong>.
+          Your order is with {SITE.name} — {SITE.tagline}. Ready pieces usually
+          dispatch in{" "}
+          <strong className="text-wine">2–4 business days</strong>
+          {isCod ? ". Please keep payment ready for delivery." : "."}
         </p>
 
         {orderId && (
@@ -79,22 +124,22 @@ function SuccessBody() {
                 </p>
                 <p className="mt-1 font-semibold text-wine text-lg">{orderId}</p>
               </div>
-              {typeof last?.total === "number" && (
-                <div className="text-right">
-                  <p className="text-xs text-muted uppercase tracking-[0.16em]">
-                    Total paid
-                  </p>
-                  <p className="mt-1 font-semibold text-wine text-lg">
-                    {formatINR(last.total)}
-                  </p>
-                </div>
-              )}
+              <div className="text-right">
+                <p className="text-xs text-muted uppercase tracking-[0.16em]">
+                  {isCod ? "Pay on delivery" : "Total paid"}
+                </p>
+                <p className="mt-1 font-semibold text-wine text-lg">
+                  {formatINR(last?.total || 0)}
+                </p>
+                <p className="text-[11px] text-muted mt-0.5">{paymentMethod}</p>
+              </div>
             </div>
             {last?.customer && (
               <p className="text-sm text-muted border-t border-line pt-2">
                 Ship to: {last.customer.name} · {last.customer.phone}
                 <br />
-                {last.customer.address}, {last.customer.city} {last.customer.pincode}
+                {last.customer.address}, {last.customer.city}{" "}
+                {last.customer.pincode}
               </p>
             )}
             {last?.items && last.items.length > 0 && (
@@ -114,24 +159,27 @@ function SuccessBody() {
         )}
 
         <div className="mt-8 grid gap-3">
-          <a
-            href={whatsappLink(shareCustomer)}
-            target="_blank"
-            rel="noreferrer"
-            className="block"
-          >
+          <a href={ownerHref} target="_blank" rel="noopener noreferrer" className="block">
             <Button variant="whatsapp" className="w-full min-h-12" size="lg">
-              <Share2 size={16} /> Share order details on WhatsApp
+              <MessageCircle size={16} /> Send order to boutique WhatsApp
             </Button>
           </a>
+          <p className="text-[11px] text-muted -mt-1">
+            Opens chat with {SITE.phone} so the owner gets your order details
+            {ownerOpened ? " (auto-opened once)" : ""}.
+          </p>
           <a
-            href={whatsappLink(notifyOwner)}
+            href={whatsappLink(
+              orderId
+                ? `Hello! My Kalaa Krityy order ${orderId} is placed (${paymentMethod}). Items: ${itemsSummary}. Total ${formatINR(last?.total || 0)}.`
+                : `Hello Kalaa Krityy! I just placed an order.`
+            )}
             target="_blank"
-            rel="noreferrer"
+            rel="noopener noreferrer"
             className="block"
           >
             <Button variant="outline" className="w-full min-h-12" size="lg">
-              <MessageCircle size={16} /> Notify Kalaa Krityy Boutique on WhatsApp
+              <Share2 size={16} /> Keep a copy on my WhatsApp
             </Button>
           </a>
           <div className="flex flex-col sm:flex-row gap-3">
@@ -156,7 +204,15 @@ function SuccessBody() {
         </div>
 
         <p className="mt-8 text-xs text-muted">
-          Support: {SITE.phone} · {SITE.email} · {SITE.address}
+          Support: {SITE.phone} · {SITE.email} ·{" "}
+          <a
+            href="https://www.instagram.com/kalaa_krityy"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:underline text-wine font-medium"
+          >
+            Instagram @{SITE.instagramHandle || "kalaa_krityy"}
+          </a>
         </p>
       </div>
     </div>

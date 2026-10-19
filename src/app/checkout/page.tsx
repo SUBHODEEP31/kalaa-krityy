@@ -3,9 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Banknote, CreditCard } from "lucide-react";
 import type { Coupon } from "@/types";
 import { useCart } from "@/store/cart";
-import { formatINR } from "@/lib/utils";
+import { cn, formatINR, ownerOrderWhatsAppLink } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SectionHeading } from "@/components/ui/badge";
@@ -19,6 +20,8 @@ declare global {
     };
   }
 }
+
+type PayMethod = "ONLINE" | "COD";
 
 function applyCouponLocal(code: string, subtotal: number, coupons: Coupon[]) {
   const coupon = coupons.find(
@@ -64,12 +67,53 @@ function loadRazorpayScript() {
   });
 }
 
+function stashLastOrder(payload: {
+  orderNumber: string;
+  total: number;
+  subtotal: number;
+  discount: number;
+  shipping: number;
+  paymentMethod: string;
+  customer: {
+    name: string;
+    phone: string;
+    email?: string;
+    address: string;
+    city: string;
+    pincode: string;
+  };
+  items: Array<{ name: string; qty: number; size?: string; color?: string; price: number }>;
+}) {
+  try {
+    sessionStorage.setItem("kk-last-order", JSON.stringify(payload));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Open owner WhatsApp with full order alert (client receives every order). */
+function notifyOwnerWhatsApp(payload: {
+  orderNumber: string;
+  total: number;
+  paymentMethod: string;
+  customer: { name: string; phone: string; address: string; city: string; pincode: string };
+  items: Array<{ name: string; qty: number; size?: string; color?: string; price: number }>;
+}) {
+  const href = ownerOrderWhatsAppLink(payload);
+  try {
+    window.open(href, "_blank", "noopener,noreferrer");
+  } catch {
+    window.location.href = href;
+  }
+}
+
 export default function CheckoutPage() {
   const router = useRouter();
   const { items, subtotal, couponCode, setCoupon, clear } = useCart();
   const [code, setCode] = useState(couponCode || "");
   const [discount, setDiscount] = useState(0);
   const [paying, setPaying] = useState(false);
+  const [payMethod, setPayMethod] = useState<PayMethod>("ONLINE");
   const [liveCoupons, setLiveCoupons] = useState<Coupon[]>([]);
   const [form, setForm] = useState({
     name: "",
@@ -116,7 +160,7 @@ export default function CheckoutPage() {
       setCoupon(null);
       return;
     }
-setDiscount(res.discount);
+    setDiscount(res.discount);
     setCoupon(res.coupon.code);
     const detail =
       res.coupon.type === "percent"
@@ -125,7 +169,77 @@ setDiscount(res.discount);
     toast.success(`${res.coupon.code} applied · ${detail}`);
   };
 
-  const onPay = async () => {
+  const lineItems = () =>
+    items.map((i) => ({
+      name: i.name,
+      qty: i.qty,
+      size: i.size,
+      color: i.color,
+      price: i.price,
+    }));
+
+  const finishSuccess = (orderNumber: string, method: string) => {
+    const payload = {
+      orderNumber,
+      total,
+      subtotal: base,
+      discount,
+      shipping,
+      paymentMethod: method,
+      customer: form,
+      items: lineItems(),
+    };
+    stashLastOrder(payload);
+    notifyOwnerWhatsApp({
+      orderNumber,
+      total,
+      paymentMethod: method,
+      customer: form,
+      items: lineItems(),
+    });
+    clear();
+    toast.success(
+      method === "COD" ? "COD order placed — boutique notified" : "Payment successful"
+    );
+    router.push(
+      `/order-success?orderId=${encodeURIComponent(orderNumber)}&pay=${encodeURIComponent(method)}`
+    );
+  };
+
+  const onCod = async () => {
+    if (!form.name || !form.phone || !form.address || !form.pincode) {
+      toast.error("Please fill required address fields");
+      return;
+    }
+    setPaying(true);
+    try {
+      const res = await fetch("/api/orders/cod", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customer: form,
+          items,
+          subtotal: base,
+          discount,
+          shipping,
+          total,
+          couponCode,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        toast.error(data.error || "Could not place COD order");
+        return;
+      }
+      finishSuccess(data.orderNumber, "COD");
+    } catch {
+      toast.error("Network error placing COD order");
+    } finally {
+      setPaying(false);
+    }
+  };
+
+  const onPayOnline = async () => {
     if (!form.name || !form.phone || !form.address || !form.pincode) {
       toast.error("Please fill required address fields");
       return;
@@ -157,7 +271,7 @@ setDiscount(res.discount);
         return;
       }
 
-const options = {
+      const options = {
         key: data.keyId || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
         amount: data.amount,
         currency: data.currency || "INR",
@@ -174,7 +288,6 @@ const options = {
           orderNumber: data.orderNumber,
         },
         theme: { color: "#6B1D3A" },
-        // Prioritize native UPI (app intent on mobile / QR on desktop)
         config: {
           display: {
             blocks: {
@@ -215,37 +328,12 @@ const options = {
               }),
             });
             const verifyData = await verifyRes.json();
-if (!verifyRes.ok || !verifyData.ok) {
+            if (!verifyRes.ok || !verifyData.ok) {
               toast.error(verifyData.error || "Payment verification failed");
               setPaying(false);
               return;
             }
-            try {
-              sessionStorage.setItem(
-                "kk-last-order",
-                JSON.stringify({
-                  orderNumber: verifyData.orderNumber,
-                  total,
-                  subtotal: base,
-                  discount,
-                  shipping,
-                  customer: form,
-                  items: items.map((i) => ({
-                    name: i.name,
-                    qty: i.qty,
-                    size: i.size,
-                    price: i.price,
-                  })),
-                })
-              );
-            } catch {
-              /* ignore */
-            }
-            clear();
-            toast.success("Payment successful");
-            router.push(
-              `/order-success?orderId=${encodeURIComponent(verifyData.orderNumber)}`
-            );
+            finishSuccess(verifyData.orderNumber, "ONLINE / Razorpay");
           } catch {
             toast.error("Could not verify payment");
             setPaying(false);
@@ -258,17 +346,21 @@ if (!verifyRes.ok || !verifyData.ok) {
     } catch {
       toast.error("Network error while starting payment");
     } finally {
-      // keep paying true until modal dismiss/success sets it false
       setTimeout(() => setPaying(false), 500);
     }
   };
 
+  const onPlace = () => {
+    if (payMethod === "COD") return onCod();
+    return onPayOnline();
+  };
+
   return (
-    <div className="container-pro py-10 md:py-16">
+    <div className="container-pro py-10 md:py-16 pb-28">
       <SectionHeading
         eyebrow="Secure Checkout"
         title="Complete Your Order"
-        subtitle="Pay safely via UPI, cards or netbanking powered by Razorpay. WhatsApp confirmation available."
+        subtitle="Pay online (UPI / cards) via Razorpay, or choose Cash on Delivery. Boutique owner is notified on WhatsApp instantly."
       />
 
       <div className="grid gap-8 lg:grid-cols-[1fr_380px]">
@@ -309,7 +401,74 @@ if (!verifyRes.ok || !verifyData.ok) {
             </div>
           </section>
 
-<section className="rounded-3xl border border-line bg-white p-6">
+          <section className="rounded-3xl border border-line bg-white p-6">
+            <h3 className="font-display text-xl text-wine mb-4">
+              Payment method
+            </h3>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label
+                className={cn(
+                  "relative flex items-start gap-3 rounded-2xl border p-4 text-left transition cursor-pointer select-none",
+                  payMethod === "ONLINE"
+                    ? "border-wine bg-wine/5 ring-2 ring-wine/20 shadow-xs"
+                    : "border-line hover:border-wine/30 bg-white"
+                )}
+              >
+                <input
+                  type="radio"
+                  name="paymentMethod"
+                  value="ONLINE"
+                  checked={payMethod === "ONLINE"}
+                  onChange={() => setPayMethod("ONLINE")}
+                  className="mt-1 h-4 w-4 accent-wine cursor-pointer shrink-0"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 text-wine font-semibold text-sm leading-snug">
+                    <CreditCard size={18} className="shrink-0 text-wine" />
+                    <span>Pay Online via UPI / QR / Cards (Instant via Razorpay)</span>
+                  </div>
+                  <p className="mt-1.5 text-xs text-muted leading-relaxed">
+                    UPI · QR · Cards · Netbanking (Fast, secure & instant confirmation via Razorpay)
+                  </p>
+                </div>
+              </label>
+
+              <label
+                className={cn(
+                  "relative flex items-start gap-3 rounded-2xl border p-4 text-left transition cursor-pointer select-none",
+                  payMethod === "COD"
+                    ? "border-wine bg-wine/5 ring-2 ring-wine/20 shadow-xs"
+                    : "border-line hover:border-wine/30 bg-white"
+                )}
+              >
+                <input
+                  type="radio"
+                  name="paymentMethod"
+                  value="COD"
+                  checked={payMethod === "COD"}
+                  onChange={() => setPayMethod("COD")}
+                  className="mt-1 h-4 w-4 accent-wine cursor-pointer shrink-0"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 text-wine font-semibold text-sm leading-snug">
+                    <Banknote size={18} className="shrink-0 text-wine" />
+                    <span>Cash on Delivery (COD) - Pay upon delivery</span>
+                  </div>
+                  <p className="mt-1.5 text-xs text-muted leading-relaxed">
+                    Pay in cash or UPI directly to the courier partner when your parcel arrives.
+                  </p>
+                </div>
+              </label>
+            </div>
+            {payMethod === "COD" && (
+              <p className="mt-3 text-xs text-muted rounded-xl bg-cream/60 border border-line px-3 py-2">
+                COD orders stay <strong className="text-wine">PENDING</strong> until
+                delivery. Please keep exact change ready when possible.
+              </p>
+            )}
+          </section>
+
+          <section className="rounded-3xl border border-line bg-white p-6">
             <h3 className="font-display text-xl text-wine mb-4">Coupon code</h3>
             <div className="flex gap-2">
               <Input
@@ -394,6 +553,12 @@ if (!verifyRes.ok || !verifyData.ok) {
               <span className="text-muted">Shipping</span>
               <span>{shipping === 0 ? "Free" : formatINR(shipping)}</span>
             </div>
+            <div className="flex justify-between text-xs text-muted">
+              <span>Method</span>
+              <span className="font-medium text-wine">
+                {payMethod === "COD" ? "Cash on Delivery (COD)" : "Pay Online (Razorpay)"}
+              </span>
+            </div>
             <div className="flex justify-between text-base font-semibold pt-2">
               <span>Total</span>
               <span className="text-wine">{formatINR(total)}</span>
@@ -402,16 +567,24 @@ if (!verifyRes.ok || !verifyData.ok) {
           <Button
             className="w-full mt-5"
             size="lg"
-            onClick={onPay}
+            onClick={onPlace}
             disabled={paying}
           >
-            {paying ? "Opening Razorpay…" : `Pay ${formatINR(total)}`}
+            {paying
+              ? payMethod === "COD"
+                ? "Placing Order (Cash on Delivery)…"
+                : "Opening Razorpay…"
+              : payMethod === "COD"
+                ? "Place Order (Cash on Delivery)"
+                : "Pay Now"}
           </Button>
           <p className="mt-3 text-[11px] text-center text-muted">
-            Secured by Razorpay · UPI / Cards / Netbanking · PCI-DSS compliant
+            {payMethod === "COD"
+              ? "Boutique owner is alerted on WhatsApp instantly (+91 79798 20645)"
+              : "Secured by Razorpay · Instant UPI / Cards · Boutique owner alerted on WhatsApp"}
           </p>
           <p className="mt-2 text-[11px] text-center text-muted">
-            By paying you agree to our{" "}
+            By ordering you agree to our{" "}
             <Link href="/terms-and-conditions" className="underline">
               Terms
             </Link>{" "}

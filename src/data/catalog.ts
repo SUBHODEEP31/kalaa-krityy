@@ -63,9 +63,11 @@ export const SITE = {
   email: "kalaakrityy@gmail.com",
   address: "Vinay Tower, Patna, Bihar",
   registration: "BR-26-0018641",
-  instagram: "https://www.instagram.com/kalaakrityy/",
+  /** Official boutique Instagram */
+  instagramHandle: "kalaa_krityy",
+  instagram: "https://www.instagram.com/kalaa_krityy",
   announcement:
-    "Festive Edit Live · Free alterations on custom orders above ₹2,999 · Use code KALAA10",
+    "Festive Edit Live · Free alterations on custom orders above ₹2,999 · Use code KALAA10 · COD available",
 };
 
 export const categories: Category[] = [

@@ -31,10 +31,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Cart is empty" }, { status: 400 });
   }
 
+  const isCod = /COD/i.test(body.paymentMethod || "");
+  const status = isCod ? "PENDING" : "PAID";
+  const paymentMethod = isCod ? "COD" : (body.paymentMethod || "DEMO_RAZORPAY");
+
   const order: Order = {
     id: `KK${Date.now().toString().slice(-10)}`,
     createdAt: new Date().toISOString(),
-    status: "PAID",
+    status,
     customer: {
       name: c.name.trim(),
       phone: c.phone.trim(),
@@ -59,9 +63,24 @@ export async function POST(req: NextRequest) {
     shipping: Number(body.shipping || 0),
     total: Number(body.total || 0),
     couponCode: body.couponCode || null,
-    paymentMethod: body.paymentMethod || "DEMO_RAZORPAY",
+    paymentMethod,
+    notes: isCod ? "[COD] Pay cash/UPI to delivery partner" : undefined,
   };
 
   const saved = await createOrder(order);
+  try {
+    const { ownerOrderAlertMessage, OWNER_WHATSAPP } = await import("@/lib/utils");
+    const alertMsg = ownerOrderAlertMessage({
+      orderNumber: saved.id,
+      total: saved.total,
+      paymentMethod,
+      customer: saved.customer,
+      items: saved.items,
+    });
+    console.log(`[WHATSAPP_ORDER_ALERT] Sent to ${OWNER_WHATSAPP}:\n${alertMsg}`);
+  } catch (e) {
+    console.error("[WHATSAPP_ORDER_ALERT] error", e);
+  }
+
   return NextResponse.json({ order: saved }, { status: 201 });
 }
